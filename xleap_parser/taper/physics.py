@@ -1,0 +1,82 @@
+"""Undulator-taper physics -- pure, vectorized, no I/O.
+
+Every function accepts NumPy scalars or arrays and broadcasts, so the same code
+serves one time point or a whole time series. Symbols follow the notebook's
+derivation (Kim, Huang & Lindberg, *Synchrotron Radiation and FELs*, 2017):
+
+    gamma : Lorentz factor of the beam
+    K     : undulator deflection parameter
+    dK    : change in K between adjacent undulators (drives the taper)
+
+Reference relations used below::
+
+    lambda_r = (lambda_u / 2 gamma^2) (1 + K^2 / 2)                 # resonance
+    dgamma   = gamma (sqrt(1 + (K + dK/2) dK / (1 + K^2/2)) - 1)    # to hold it
+    taper    = 2 gamma^2 dgamma c / (L_u (1 + K^2/2))               # dgamma / slippage
+"""
+from __future__ import annotations
+
+import numpy as np
+from numpy.typing import ArrayLike, NDArray
+
+from .constants import (
+    ELECTRON_REST_ENERGY_MEV,
+    SPEED_OF_LIGHT_M_PER_S,
+    UNDULATOR_LENGTH_M,
+)
+
+__all__ = [
+    "gamma_from_momentum_gev",
+    "dk_to_dgamma",
+    "slippage_time_s",
+    "taper_mev_per_fs",
+]
+
+
+def gamma_from_momentum_gev(momentum_gev_c: ArrayLike) -> NDArray[np.float64]:
+    """Lorentz factor from beam momentum in GeV/c.
+
+    ``BEND:DMPH:400:BACT`` reports the momentum the dump magnet is tuned to bend,
+    in GeV/c. Exactly, ``gamma = E / m c^2 = sqrt((pc)^2 + (m c^2)^2) / m c^2``;
+    since ``pc >> m c^2`` this is ~``pc / m c^2`` but we keep the exact form.
+    """
+    pc_mev = np.asarray(momentum_gev_c, dtype=np.float64) * 1.0e3
+    return np.sqrt((pc_mev / ELECTRON_REST_ENERGY_MEV) ** 2 + 1.0)
+
+
+def dk_to_dgamma(
+    dK: ArrayLike, K: ArrayLike, gamma: ArrayLike
+) -> NDArray[np.float64]:
+    """Energy change (in units of gamma) needed to keep resonance across ``dK``.
+
+    Solves ``lambda_r(gamma, K) = lambda_r(gamma + dgamma, K + dK)`` for dgamma.
+    """
+    dK = np.asarray(dK, dtype=np.float64)
+    K = np.asarray(K, dtype=np.float64)
+    gamma = np.asarray(gamma, dtype=np.float64)
+    return gamma * (np.sqrt(1.0 + ((K + dK / 2.0) * dK) / (1.0 + K**2 / 2.0)) - 1.0)
+
+
+def slippage_time_s(K: ArrayLike, gamma: ArrayLike) -> NDArray[np.float64]:
+    """Time for radiation to slip one undulator's worth ahead of the beam.
+
+    One undulator holds ``N_u = L_u / lambda_u`` periods, each slipping the beam
+    by one ``lambda_r``; the total slippage ``N_u lambda_r`` in units of time is
+    ``L_u (1 + K^2/2) / (2 gamma^2 c)`` -- and ``lambda_u`` cancels.
+    """
+    K = np.asarray(K, dtype=np.float64)
+    gamma = np.asarray(gamma, dtype=np.float64)
+    return UNDULATOR_LENGTH_M * (1.0 + K**2 / 2.0) / (2.0 * gamma**2 * SPEED_OF_LIGHT_M_PER_S)
+
+
+def taper_mev_per_fs(
+    dK: ArrayLike, K: ArrayLike, gamma: ArrayLike
+) -> NDArray[np.float64]:
+    """Undulator taper: resonant-energy gain per slippage length, in MeV/fs.
+
+    ``taper = dgamma / slippage_time``, with ``dgamma`` converted to MeV
+    (x ``m c^2``) and ``slippage_time`` to fs (x 1e15).
+    """
+    dgamma = dk_to_dgamma(dK, K, gamma)
+    slippage_fs = slippage_time_s(K, gamma) * 1.0e15
+    return dgamma * ELECTRON_REST_ENERGY_MEV / slippage_fs
