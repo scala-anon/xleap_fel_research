@@ -17,9 +17,10 @@ SPEED_OF_LIGHT_M_PER_S: Final[float] = 299_792_458.0  # c
 ELECTRON_REST_ENERGY_MEV: Final[float] = 0.510_998_950_0  # m_e c^2
 UNDULATOR_LENGTH_M: Final[float] = 3.4  # L_u, one undulator segment (HXR & SXR)
 
-# Back-compat module aliases (always HXR-specific; the switch is beamlines.DEFAULT_LINE).
-KACT_PV_PATTERN: Final[re.Pattern[str]] = HXR.kact_pattern
-BEAM_MOMENTUM_PV: Final[str] = HXR.momentum_pv
+# Back-compat module aliases -- track the active line (beamlines.DEFAULT_LINE), so
+# `from taper import KACT_PV_PATTERN` matches the same line the fetch/analysis uses.
+KACT_PV_PATTERN: Final[re.Pattern[str]] = DEFAULT_LINE.kact_pattern
+BEAM_MOMENTUM_PV: Final[str] = DEFAULT_LINE.momentum_pv
 
 # --- I/O ---------------------------------------------------------------------
 # Long-form snapshot CSV produced by ``python -m snapshots`` (columns:

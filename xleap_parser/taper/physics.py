@@ -36,7 +36,8 @@ __all__ = [
 def gamma_from_momentum_gev(momentum_gev_c: ArrayLike) -> NDArray[np.float64]:
     """Lorentz factor from beam momentum in GeV/c.
 
-    ``BEND:DMPH:400:BACT`` reports the momentum the dump magnet is tuned to bend,
+    The active line's dump-magnet PV (``BEND:DMPS:400:BACT`` on SXR,
+    ``BEND:DMPH:400:BACT`` on HXR) reports the momentum the dump is tuned to bend,
     in GeV/c. Exactly, ``gamma = E / m c^2 = sqrt((pc)^2 + (m c^2)^2) / m c^2``;
     since ``pc >> m c^2`` this is ~``pc / m c^2`` but we keep the exact form.
     """

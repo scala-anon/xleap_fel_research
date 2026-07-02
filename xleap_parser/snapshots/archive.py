@@ -152,7 +152,7 @@ def fetch_pv(pv: str, cfg: RunConfig) -> tuple[str, list, str]:
     ``(pv, rows, status)``; status is 'ok', 'empty', or 'error: ...'.
     """
     from_epoch = window_epoch(cfg.from_time)
-    query = f"{cfg.operator}({pv})" if cfg.operator else pv
+    query = f"{cfg.bin_operator}({pv})" if cfg.bin_operator else pv
     try:
         secs_arr, vals_arr = _get_series(query, cfg)
     except Exception as exc:  # noqa: BLE001 - report any I/O/parse failure per PV

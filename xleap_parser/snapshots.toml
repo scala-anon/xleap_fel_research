@@ -1,6 +1,6 @@
 from_time   = "2018-01-10T22:00:00.000Z"  # ISO8601 UTC (Zulu)
 to_time     = "2018-01-11T08:00:00.000Z"
 bin_seconds = 900                          # 15-min nominal grid
-operator    = "firstSample_900"            # set to "" for raw samples
+operator    = "firstSample"                # bin-reduction fn (binned at bin_seconds); "" for raw
 protocol    = "PVA"                        # "PVA" (EPICS v4) or "HTTP" (appliance)
 timeout     = 60.0

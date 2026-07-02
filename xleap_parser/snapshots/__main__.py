@@ -72,7 +72,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     # RunConfig overrides; default None so they fall through to TOML/dataclass.
     p.add_argument("--from", dest="from_time", default=None, help="window start, ISO8601 UTC")
     p.add_argument("--to", dest="to_time", default=None, help="window end, ISO8601 UTC")
-    p.add_argument("--operator", default=None, help='archiver bin op, or "" for raw')
+    p.add_argument("--operator", default=None, help='bin-reduction fn (binned at --bin-seconds), or "" for raw')
     p.add_argument("--protocol", default=None, choices=["PVA", "HTTP"], help="MEME transport")
     p.add_argument("--bin-seconds", type=int, default=None, help="bin width in seconds")
     p.add_argument("--timeout", type=float, default=None, help="per-request timeout (s)")
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     pvs = read_pvs(args.pvs)
     print(
         f"Fetching {len(pvs)} PVs from {args.pvs}  [{cfg.from_time} .. {cfg.to_time}]  "
-        f"op={cfg.operator or 'raw'}  proto={cfg.protocol}  jobs={args.jobs}"
+        f"op={cfg.bin_operator or 'raw'}  proto={cfg.protocol}  jobs={args.jobs}"
     )
 
     all_rows: list[tuple] = []
