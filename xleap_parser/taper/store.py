@@ -27,6 +27,7 @@ __all__ = ["SnapshotStore"]
 
 _SQLITE_TABLE = "snapshots"
 _MOVED = "moved"
+_SPREAD = "spread"
 
 
 def _sort_key(label: str) -> tuple[int, object]:
@@ -35,11 +36,12 @@ def _sort_key(label: str) -> tuple[int, object]:
 
 
 def _finalize(frame: pd.DataFrame) -> pd.DataFrame:
-    """Coerce dtypes and guarantee a boolean ``moved`` column.
+    """Coerce dtypes and guarantee ``moved`` (bool) and ``spread`` (float) columns.
 
-    ``moved`` (added by the snapshots motion pass) is optional: legacy CSV/SQLite
-    predating it default to ``False``. Bool-from-text is parsed leniently so
-    ``"True"``/``"False"``/``1``/``0`` all round-trip through a CSV.
+    Both are optional add-ons from the snapshots probe pass: legacy CSV/SQLite
+    predating them default to ``False`` / ``NaN``. Bool-from-text is parsed
+    leniently so ``"True"``/``"False"``/``1``/``0`` all round-trip through a CSV;
+    ``NaN`` spread means 'unknown', so the energy-stability gate simply won't fire.
     """
     frame["nominal_time"] = pd.to_datetime(frame["nominal_time"])
     frame["timestamp"] = pd.to_datetime(frame["timestamp"])
@@ -50,7 +52,11 @@ def _finalize(frame: pd.DataFrame) -> pd.DataFrame:
         )
     else:
         frame[_MOVED] = False
-    return frame.loc[:, [*SNAPSHOT_COLUMNS, _MOVED]]
+    if _SPREAD in frame.columns:
+        frame[_SPREAD] = pd.to_numeric(frame[_SPREAD], errors="coerce")
+    else:
+        frame[_SPREAD] = float("nan")
+    return frame.loc[:, [*SNAPSHOT_COLUMNS, _MOVED, _SPREAD]]
 
 
 @dataclass(frozen=True)
@@ -144,6 +150,16 @@ class SnapshotStore:
         """Value time series for a single PV, indexed by nominal time."""
         rows = self.frame.loc[self.frame["pv"] == pv, ["nominal_time", "value"]]
         return rows.set_index("nominal_time")["value"].sort_index()
+
+    def spread_series(self, pv: str) -> pd.Series:
+        """Intra-bin fractional spread for a single PV, indexed by nominal time.
+
+        ``NaN`` where unavailable (legacy data without a ``spread`` column) --
+        callers treat ``NaN`` as 'unknown', so the energy-stability gate does not
+        fire on data fetched before spread was recorded.
+        """
+        rows = self.frame.loc[self.frame["pv"] == pv, ["nominal_time", _SPREAD]]
+        return rows.set_index("nominal_time")[_SPREAD].sort_index()
 
     # --- persistence ---------------------------------------------------------
     def write_sqlite(self, path: str | Path, *, table: str = _SQLITE_TABLE) -> int:
