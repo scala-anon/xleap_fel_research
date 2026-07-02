@@ -378,7 +378,7 @@ cells.append(md(r"""## 6. Discussion and open questions
 4. **Motion threshold.** Recommend $10^{-3}$, justified by Section 5.4.
 5. **Record motion magnitude.** Have the fetch store the fractional spread $(\max-\min)/\mathrm{median}$ per bin, not just the `moved` boolean, so borderline points (the 6 in Section 5.4) can be judged and the threshold tuned without re-fetching.
 
-**Appendix.** The full unit and smoke suite lives in [`test_taper.py`](test_taper.py) (`python test_taper.py`): physics identities, store pivots, detection, the XLEAP timeline, and the motion filter."""))
+**Appendix.** The full unit and smoke suite lives in [`tests/test_taper.py`](tests/test_taper.py) (`python -m pytest tests/`): physics identities, store pivots, detection, the XLEAP timeline, the motion filter, and the energy-stability gate."""))
 
 # ============================================================================
 #  Assemble

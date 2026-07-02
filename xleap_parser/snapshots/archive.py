@@ -32,6 +32,18 @@ def window_epoch(from_time: str) -> int:
     return calendar.timegm(time.strptime(from_time[:19], "%Y-%m-%dT%H:%M:%S"))
 
 
+def bucket_start(s: int, from_epoch: int, bin_seconds: int) -> int:
+    """Bin start for sample-epoch ``s``, anchored to the window start.
+
+    Anchoring to ``from_epoch`` (not the global 1970 grid) lines the bin labels up
+    with ``from_time`` for any window -- including short or grid-unaligned ones, so
+    the first bin's nominal time IS ``from_time`` and its motion window is measured
+    from there. Identical to global-grid flooring when ``from_time`` sits on a
+    ``bin_seconds`` boundary (e.g. the 900 s snapshot grid).
+    """
+    return from_epoch + ((s - from_epoch) // bin_seconds) * bin_seconds
+
+
 def utc_datetime(iso_zulu: str) -> datetime:
     """Parse an ISO8601 Zulu string to a UTC-*aware* datetime.
 
@@ -100,6 +112,41 @@ def _window_moved(values: list[float], threshold: float) -> bool:
     return spread / abs(median) > threshold
 
 
+def _fractional_spread(values: list[float]) -> float:
+    """Fractional spread ``(max - min) / |median|`` over a bin's raw samples.
+
+    <= 1 sample cannot show a spread, so it is ``0.0`` (stationary). The
+    (physically impossible for K/energy) zero-median case returns the raw span.
+    """
+    if len(values) <= 1:
+        return 0.0
+    median = statistics.median(values)
+    span = max(values) - min(values)
+    return span if median == 0.0 else span / abs(median)
+
+
+def _spread_by_bucket(secs_arr, vals_arr, cfg: RunConfig) -> dict[int, float]:
+    """Map each bin's start epoch -> fractional spread over the FULL bin.
+
+    Unlike motion (which inspects only the first ``snapshot_delta_s`` of the bin),
+    the spread uses *every* sample in the bin -- so a bin sitting on a slow,
+    minutes-long excursion (e.g. a dump-magnet standardization swinging the beam
+    energy readback) shows a large spread even though its first few seconds looked
+    steady. Consumed by the analysis' energy-stability gate.
+    """
+    from_epoch = window_epoch(cfg.from_time)
+    bins: dict[int, list[float]] = {}
+    for secs, val in zip(secs_arr, vals_arr):
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            continue
+        s = int(secs)
+        if s < from_epoch:  # drop the prepended pre-window boundary sample
+            continue
+        bucket = bucket_start(s, from_epoch, cfg.bin_seconds)
+        bins.setdefault(bucket, []).append(float(val))
+    return {bucket: _fractional_spread(vals) for bucket, vals in bins.items()}
+
+
 def _motion_by_bucket(secs_arr, vals_arr, cfg: RunConfig) -> dict[int, bool]:
     """Map each bin's start epoch -> whether the PV moved within ``[t, t+delta]``.
 
@@ -117,7 +164,7 @@ def _motion_by_bucket(secs_arr, vals_arr, cfg: RunConfig) -> dict[int, bool]:
         s = int(secs)
         if s < from_epoch:  # drop the prepended pre-window boundary sample
             continue
-        bucket = (s // cfg.bin_seconds) * cfg.bin_seconds
+        bucket = bucket_start(s, from_epoch, cfg.bin_seconds)
         if s - bucket <= cfg.snapshot_delta_s:
             windows.setdefault(bucket, []).append(float(val))
     return {
@@ -126,30 +173,39 @@ def _motion_by_bucket(secs_arr, vals_arr, cfg: RunConfig) -> dict[int, bool]:
     }
 
 
-def _fetch_motion(pv: str, cfg: RunConfig) -> dict[int, bool]:
-    """Per-bin motion map for ``pv`` from a raw (no-operator) fetch.
+def _fetch_bin_stats(
+    pv: str, cfg: RunConfig
+) -> tuple[dict[int, bool], dict[int, float]]:
+    """Per-bin ``(moved, spread)`` maps for ``pv`` from one raw (no-operator) fetch.
 
-    Returns an empty map (all stationary) when motion is disabled or the raw
-    fetch fails -- a motion probe must never drop or mask a value row.
+    ``moved`` is the snapshot-instant motion (first ``snapshot_delta_s`` of the
+    bin); ``spread`` is the fractional range over the whole bin. Both come from
+    the same raw pull, so there is one extra archive round-trip per PV, not two.
+    Returns empty maps (all stationary / unknown) when the probe is disabled or
+    the raw fetch fails -- a probe must never drop or mask a value row.
     """
     if cfg.snapshot_delta_s <= 0:
-        return {}
+        return {}, {}
     try:
         secs_arr, vals_arr = _get_series(pv, cfg)  # bare PV name => raw samples
-    except Exception:  # noqa: BLE001 - a motion-probe failure just means "unknown"
-        return {}
+    except Exception:  # noqa: BLE001 - a probe failure just means "unknown"
+        return {}, {}
     if secs_arr is None or len(secs_arr) == 0:
-        return {}
-    return _motion_by_bucket(secs_arr, vals_arr, cfg)
+        return {}, {}
+    return (
+        _motion_by_bucket(secs_arr, vals_arr, cfg),
+        _spread_by_bucket(secs_arr, vals_arr, cfg),
+    )
 
 
 def fetch_pv(pv: str, cfg: RunConfig) -> tuple[str, list, str]:
-    """Fetch one PV -> ``(nominal_time, pv, timestamp, value, moved)`` rows.
+    """Fetch one PV -> ``(nominal_time, pv, timestamp, value, moved, spread)`` rows.
 
     The value pass bins the operator-reduced samples (first sample per bin); the
-    motion pass flags each bin whose PV moved within ``snapshot_delta_s`` of the
-    nominal time (Aaron's rule: motion => don't trust a taper there). Returns
-    ``(pv, rows, status)``; status is 'ok', 'empty', or 'error: ...'.
+    probe pass adds, per bin, ``moved`` (PV moved within ``snapshot_delta_s`` of the
+    nominal time -- Aaron's rule) and ``spread`` (fractional range over the whole
+    bin, for the energy-stability gate). Returns ``(pv, rows, status)``; status is
+    'ok', 'empty', or 'error: ...'.
     """
     from_epoch = window_epoch(cfg.from_time)
     query = f"{cfg.bin_operator}({pv})" if cfg.bin_operator else pv
@@ -169,13 +225,17 @@ def fetch_pv(pv: str, cfg: RunConfig) -> tuple[str, list, str]:
         s = int(secs)
         if s < from_epoch:  # drop the prepended pre-window boundary sample
             continue
-        bucket = (s // cfg.bin_seconds) * cfg.bin_seconds
+        bucket = bucket_start(s, from_epoch, cfg.bin_seconds)
         if bucket not in by_bucket:  # data is time-ordered; first wins
             by_bucket[bucket] = (s, val)
 
-    moved_by_bucket = _fetch_motion(pv, cfg)
+    moved_by_bucket, spread_by_bucket = _fetch_bin_stats(pv, cfg)
     rows = [
-        (iso_utc(bucket), pv, iso_utc(s), float(val), moved_by_bucket.get(bucket, False))
+        (
+            iso_utc(bucket), pv, iso_utc(s), float(val),
+            moved_by_bucket.get(bucket, False),
+            spread_by_bucket.get(bucket, float("nan")),
+        )
         for bucket, (s, val) in sorted(by_bucket.items())
     ]
     return pv, rows, "ok" if rows else "empty"

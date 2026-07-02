@@ -11,7 +11,7 @@ from beamlines import DEFAULT_LINE
 
 # Output CSV schema. These column names are the contract downstream
 # `taper.SnapshotStore.from_csv` reads by name.
-OUTPUT_HEADER = ["nominal_time", "pv", "timestamp", "value", "moved"]
+OUTPUT_HEADER = ["nominal_time", "pv", "timestamp", "value", "moved", "spread"]
 
 # Default PV list follows the ONE line switch in beamlines.py, so the fetch can
 # never disagree with the analysis: flip beamlines.DEFAULT_LINE and this tracks it
