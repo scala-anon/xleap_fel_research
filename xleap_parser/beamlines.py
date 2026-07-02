@@ -37,6 +37,14 @@ class Beamline:
         """Fetch PV-list filename for this line (``pvs_hxr.csv`` / ``pvs_sxr.csv``)."""
         return f"pvs_{self.name.lower()}.csv"
 
+    def kact_pv(self, undulator: object) -> str:
+        """Concrete ``KAct`` PV name for one undulator (inverse of ``kact_pattern``).
+
+        Derived from ``kact_pattern`` so the line's device string has a single
+        source of truth: ``USEG:UNDS:(\\d+):KAct`` -> ``USEG:UNDS:2150:KAct``.
+        """
+        return self.kact_pattern.pattern.replace(r"(\d+)", str(undulator))
+
 
 HXR: Final[Beamline] = Beamline(
     name="HXR",

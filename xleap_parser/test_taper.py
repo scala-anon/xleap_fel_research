@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from taper import (
-    HXR,
+    DEFAULT_LINE as LINE,
     BEAM_MOMENTUM_PV,
     KACT_PV_PATTERN,
     DetectionParams,
@@ -46,7 +46,7 @@ def _synthetic_csv(path, moving_at: set[int] | None = None) -> None:
         moved = moving_at is not None and t_idx in moving_at
         for u_idx, und in enumerate(UND_NUMBERS):
             k = 1.5 + (STEP * (u_idx - 2) if u_idx >= 3 else 0.0)
-            row = (nominal, f"USEG:UNDH:{und}:KAct", nominal, k)
+            row = (nominal, LINE.kact_pv(und), nominal, k)
             rows.append(row + (moved,) if moving_at is not None else row)
         mom = (nominal, BEAM_MOMENTUM_PV, nominal, MOMENTUM_GEV)
         rows.append(mom + (False,) if moving_at is not None else mom)
@@ -87,7 +87,7 @@ def test_detection_and_timeline(tmp_path) -> None:
     assert mask.iloc[0].sum() >= 7
     assert not bool(mask.iloc[0, 0])  # flat head undulator is not lasing
 
-    points = xleap_timeline(store, line=HXR)
+    points = xleap_timeline(store, line=LINE)
     assert len(points) == 3
     first = points[0]
     assert first.xleap_on and first.n_und >= 7
@@ -103,7 +103,7 @@ def test_motion_filter(tmp_path) -> None:
     _synthetic_csv(csv, moving_at={1})  # undulators moving at the middle time
     store = SnapshotStore.from_csv(csv)
 
-    points = xleap_timeline(store, line=HXR)
+    points = xleap_timeline(store, line=LINE)
     assert len(points) == 3
     lasing, moving, quiet = points  # t0 lases, t1 moving, t2 lases
 
