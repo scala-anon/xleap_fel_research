@@ -16,7 +16,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
+
+# PV-list CSVs live in ``config/`` next to this module. Anchoring to ``__file__``
+# (not the process CWD) is what lets the fetcher find them whether it is run from
+# the repo root, from ``xleap_parser/``, or via ``scripts/pull_sxr.py`` -- one
+# source of truth for the path, resolved deterministically.
+_CONFIG_DIR: Final[Path] = Path(__file__).resolve().parent / "config"
 
 
 @dataclass(frozen=True)
@@ -41,8 +48,12 @@ class Beamline:
 
     @property
     def pvs_csv(self) -> str:
-        """Fetch PV-list filename for this line (``pvs_hxr.csv`` / ``pvs_sxr.csv``)."""
-        return f"pvs_{self.name.lower()}.csv"
+        """Absolute path to this line's PV list (``config/pvs_hxr.csv`` / ``pvs_sxr.csv``).
+
+        Anchored to the module via :data:`_CONFIG_DIR`, so it resolves the same no
+        matter what the process CWD is.
+        """
+        return str(_CONFIG_DIR / f"pvs_{self.name.lower()}.csv")
 
     def kact_pv(self, undulator: object) -> str:
         """Concrete per-segment PV name for one undulator (inverse of ``kact_pattern``).
