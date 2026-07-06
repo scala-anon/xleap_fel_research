@@ -39,3 +39,9 @@ htmlcov/
 CLAUDE.md
 HANDOFF.md
 AGENTS.md
+# Snapshot outputs (keep tracked inputs like pvs_sxr.csv)
+xleap_parser/snapshots_*.csv
+xleap_parser/snapshots.csv
+
+# Image outputs
+*.png
