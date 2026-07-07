@@ -112,7 +112,9 @@ def test_detection_and_timeline(tmp_path) -> None:
     assert np.isfinite(first.taper) and first.taper > 0
 
     frame = timeline_frame(points)
-    assert list(frame.columns) == ["xleap_on", "n_und", "taper", "moving", "energy_unsteady"]
+    assert list(frame.columns) == [
+        "xleap_on", "n_und", "taper", "moving", "energy_unsteady", "energy_implausible"
+    ]
     assert frame.index.is_monotonic_increasing
 
 
@@ -164,6 +166,34 @@ def test_energy_stability_gate(tmp_path) -> None:
     # the unsteady-energy bin: force-cleared, flagged (energy, not undulator), not dropped
     assert unsteady.energy_unsteady and not unsteady.moving
     assert not unsteady.xleap_on and unsteady.n_und == 0 and math.isnan(unsteady.taper)
+
+
+def test_energy_plausibility_gate(tmp_path) -> None:
+    """A bin whose (steady) beam momentum is outside the physical band is force-
+    cleared as energy_implausible -- catching the steady-but-off-nominal case the
+    steadiness gate cannot (e.g. a rock-steady 10 GeV readback on the soft line)."""
+    csv = tmp_path / "snapshots.csv"
+    base = datetime(2024, 6, 10, 4, 0)
+    rows = []
+    for t_idx in range(3):
+        nominal = (base + timedelta(minutes=15 * t_idx)).isoformat()
+        mom = 10.0 if t_idx == 1 else MOMENTUM_GEV  # middle bin off-nominal but STEADY
+        for u_idx, und in enumerate(UND_NUMBERS):
+            k = 1.5 + (STEP * (u_idx - 2) if u_idx >= 3 else 0.0)
+            rows.append((nominal, LINE.kact_pv(und), nominal, k, False, 0.0))
+        rows.append((nominal, BEAM_MOMENTUM_PV, nominal, mom, False, 1e-4))  # steady
+    cols = ["nominal_time", "pv", "timestamp", "value", "moved", "spread"]
+    pd.DataFrame(rows, columns=cols).to_csv(csv, index=False)
+
+    store = SnapshotStore.from_csv(csv)
+    lasing, bad, quiet = xleap_timeline(store, line=LINE)  # default band (2.5, 5.5)
+
+    # the off-nominal-energy bin: cleared as implausible, not unsteady/moving
+    assert bad.energy_implausible and not bad.energy_unsteady and not bad.moving
+    assert not bad.xleap_on and bad.n_und == 0 and math.isnan(bad.taper)
+    # in-band bins are untouched
+    assert lasing.xleap_on and not lasing.energy_implausible and lasing.taper > 0
+    assert quiet.xleap_on and not quiet.energy_implausible
 
 
 def test_energy_gate_off_for_legacy_data(tmp_path) -> None:
@@ -231,6 +261,8 @@ def _run_standalone() -> int:
         test_motion_filter(Path(d))
     with tempfile.TemporaryDirectory() as d:
         test_energy_stability_gate(Path(d))
+    with tempfile.TemporaryDirectory() as d:
+        test_energy_plausibility_gate(Path(d))
     with tempfile.TemporaryDirectory() as d:
         test_energy_gate_off_for_legacy_data(Path(d))
     test_snapshots_spread_helpers()

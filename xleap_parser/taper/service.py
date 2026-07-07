@@ -24,6 +24,7 @@ __all__ = [
     "xleap_timeline",
     "timeline_frame",
     "DEFAULT_ENERGY_SPREAD_MAX",
+    "DEFAULT_MOMENTUM_GEV_RANGE",
 ]
 
 # Max fractional intra-bin spread of the beam-energy readback before the bin's
@@ -33,6 +34,16 @@ __all__ = [
 # observed standardization excursions spread ~170%, so the gate has wide margin.
 DEFAULT_ENERGY_SPREAD_MAX: float = 0.02
 
+# Physical beam-momentum band (GeV/c) for the active line. A bin whose dump-momentum
+# readback sits OUTSIDE this range is force-cleared as ``energy_implausible``: the beam
+# was not at an SXR-XLEAP working point (e.g. a rock-steady 10 GeV readback -> gamma~19570
+# -> ~3.3 keV hard X-ray, not the ~530 eV soft band), so its gamma -- and thus taper,
+# which goes as gamma^3 -- is meaningless even though the energy is perfectly *steady*.
+# This complements the steadiness gate, which by construction cannot catch a
+# steady-but-off-nominal energy. PROVISIONAL band around the observed ~4 GeV SXR median;
+# tune with the controls group (David Cesar).
+DEFAULT_MOMENTUM_GEV_RANGE: tuple[float, float] = (2.5, 5.5)
+
 
 @dataclass(frozen=True)
 class XleapPoint:
@@ -40,11 +51,13 @@ class XleapPoint:
 
     ``taper`` is the first lasing group's taper in MeV/fs (NaN when off or when
     gamma is unavailable). ``k_lasing`` maps undulator number -> K over every
-    lasing undulator at this time. Two independent quality flags force-clear a
+    lasing undulator at this time. Three independent quality flags force-clear a
     point (no taper, no XLEAP) while keeping it visible rather than dropping it:
-    ``moving`` -- an undulator was being slewed at the snapshot instant; and
+    ``moving`` -- an undulator was being slewed at the snapshot instant;
     ``energy_unsteady`` -- the beam-energy readback was not steady across the bin
-    (a transition/standardization), so its gamma cannot be trusted.
+    (a transition/standardization); and ``energy_implausible`` -- the (steady)
+    beam momentum was outside the line's physical band, so the beam was not at an
+    XLEAP working point. In all three cases gamma -- and thus taper -- is untrustworthy.
     """
 
     datetime: datetime
@@ -54,6 +67,7 @@ class XleapPoint:
     taper: float
     moving: bool = False
     energy_unsteady: bool = False
+    energy_implausible: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """The notebook's documented data object (``K_lasing`` spelling kept)."""
@@ -65,6 +79,7 @@ class XleapPoint:
             "taper": self.taper,
             "moving": self.moving,
             "energy_unsteady": self.energy_unsteady,
+            "energy_implausible": self.energy_implausible,
         }
 
 
@@ -87,6 +102,7 @@ def xleap_timeline(
     start: datetime | None = None,
     end: datetime | None = None,
     energy_spread_max: float = DEFAULT_ENERGY_SPREAD_MAX,
+    momentum_gev_range: tuple[float, float] = DEFAULT_MOMENTUM_GEV_RANGE,
 ) -> list[XleapPoint]:
     """XLEAP verdict per nominal time in ``store`` (optionally clipped to a window).
 
@@ -95,6 +111,10 @@ def xleap_timeline(
     readback tolerated before the bin is force-cleared as energy-unsteady (the
     taper's gamma is untrustworthy there). The gate is skipped for bins whose
     spread is unknown (legacy data with no ``spread`` column -> NaN).
+    ``momentum_gev_range`` is the physical ``(min, max)`` dump-momentum band; a bin
+    whose momentum falls outside it (or is missing) is force-cleared as
+    energy-implausible -- the beam was not at an XLEAP working point, so its
+    gamma/taper are meaningless even when the energy is steady.
     """
     kvals = store.wide_values(line.kact_pattern)
     if line.seg_attr == "GapAct":
@@ -118,7 +138,10 @@ def xleap_timeline(
     moved = store.wide_moved(line.kact_pattern)
     moving_any = moved.any(axis=1).reindex(kvals.index, fill_value=False)
 
-    def _cleared(time, *, moving: bool, energy_unsteady: bool) -> XleapPoint:
+    def _cleared(
+        time, *, moving: bool = False, energy_unsteady: bool = False,
+        energy_implausible: bool = False,
+    ) -> XleapPoint:
         """A force-cleared point: uncomputable taper, kept visible and flagged."""
         return XleapPoint(
             datetime=time.to_pydatetime(),
@@ -128,20 +151,29 @@ def xleap_timeline(
             taper=float("nan"),
             moving=moving,
             energy_unsteady=energy_unsteady,
+            energy_implausible=energy_implausible,
         )
 
+    lo, hi = momentum_gev_range
     points: list[XleapPoint] = []
     for time, row in masked.iterrows():
         if bool(moving_any.loc[time]):
             # Undulators were moving in this window: don't trust a taper here
             # (Aaron). Force-clear but keep the point flagged, not dropped.
-            points.append(_cleared(time, moving=True, energy_unsteady=False))
+            points.append(_cleared(time, moving=True))
             continue
         spread = energy_spread.loc[time]
         if np.isfinite(spread) and spread > energy_spread_max:
             # Beam energy was not steady across the bin (a transition or dump-magnet
             # standardization): gamma -- and thus taper -- is uncomputable here.
-            points.append(_cleared(time, moving=False, energy_unsteady=True))
+            points.append(_cleared(time, energy_unsteady=True))
+            continue
+        mom = momentum.loc[time]
+        if not (lo <= mom <= hi):
+            # Beam momentum is outside the line's physical band (or missing): the beam
+            # was not at an XLEAP working point, so gamma/taper are meaningless even
+            # though the energy reads perfectly steady. Force-clear, flagged.
+            points.append(_cleared(time, energy_implausible=True))
             continue
         lasing = row.dropna()
         k_lasing = {str(und): float(k) for und, k in lasing.items()}
@@ -169,6 +201,7 @@ def timeline_frame(points: list[XleapPoint]) -> pd.DataFrame:
             "taper": [p.taper for p in points],
             "moving": [p.moving for p in points],
             "energy_unsteady": [p.energy_unsteady for p in points],
+            "energy_implausible": [p.energy_implausible for p in points],
         },
         index=pd.DatetimeIndex([p.datetime for p in points], name="datetime"),
     )

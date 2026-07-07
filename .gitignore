@@ -45,3 +45,4 @@ xleap_parser/snapshots.csv
 
 # Image outputs
 *.png
+xleap_parser/cache/BEND_DMPS_400_BACT_20251001-20260622.pkl
