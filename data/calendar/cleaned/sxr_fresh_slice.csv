@@ -1,0 +1,2 @@
+start,end,program_name,description,energy_note,config,calendar,tags,primary_class,all_flags,ambiguous,url
+2018-12-05T11:00:00-08:00,2018-12-05T17:00:00-08:00,"Fresh-slice multi-stage scheme for high power.  1.5 keV, 3 kA",Deliver to TXI,,,NC-TXI,,fresh_slice,fresh_slice;setup_tune,False,https://www.google.com/calendar/event?eid=NHViODdhZ2dyMTJna2tuYjYzZm1tbWZkdGggYWc5MHRuNjV0azE2OWtncGt0OGk3Mjg2bnNAZw
